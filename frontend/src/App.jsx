@@ -37,6 +37,9 @@ function App() {
   const [logs, setLogs] = useState([]);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isTraining, setIsTraining] = useState(false);
+  const [trainingMessage, setTrainingMessage] = useState('');
+  const [requestMessage, setRequestMessage] = useState('');
+  const [modelInfo, setModelInfo] = useState(null);
 
   // Poll for data
   useEffect(() => {
@@ -45,10 +48,17 @@ function App() {
         const statsRes = await fetch(`${API_URL}/stats`);
         const statsData = await statsRes.json();
         setStats(statsData);
+        setIsTraining(statsData.system_status === 'Training in progress...');
 
         const logsRes = await fetch(`${API_URL}/logs`);
         const logsData = await logsRes.json();
         setLogs(logsData);
+
+        const modelRes = await fetch(`${API_URL}/model-info`);
+        if (!modelRes.ok) {
+          throw new Error('Could not load model information.');
+        }
+        setModelInfo(await modelRes.json());
       } catch (err) {
         console.error("API Error", err);
       }
@@ -61,13 +71,33 @@ function App() {
 
   const handleToggleSimulation = async () => {
     const endpoint = stats.is_running ? 'stop' : 'start';
-    await fetch(`${API_URL}/simulation/${endpoint}`, { method: 'POST' });
+    setRequestMessage('');
+    try {
+      const response = await fetch(`${API_URL}/simulation/${endpoint}`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.detail || 'Could not change simulation state.');
+      }
+      setRequestMessage(result.message);
+    } catch (err) {
+      setRequestMessage(err.message || 'Could not reach the backend.');
+    }
   };
 
   const handleTrain = async () => {
     setIsTraining(true);
-    await fetch(`${API_URL}/train`, { method: 'POST' });
-    setTimeout(() => setIsTraining(false), 5000); // UI feedback
+    setTrainingMessage('');
+    try {
+      const response = await fetch(`${API_URL}/train`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.detail || 'Could not start training.');
+      }
+      setTrainingMessage(result.message);
+    } catch (err) {
+      setIsTraining(false);
+      setTrainingMessage(err.message || 'Could not reach the backend.');
+    }
   };
 
   // Prepare chart data from logs
@@ -99,7 +129,7 @@ function App() {
             active={activeTab === 'live'} 
             onClick={() => setActiveTab('live')}
             icon={<Activity size={18}/>} 
-            label="Live Traffic" 
+            label="Sample Replay" 
           />
           <NavItem 
             active={activeTab === 'training'} 
@@ -118,7 +148,7 @@ function App() {
         <div className="p-4 bg-white/5 rounded-xl border border-white/5 mt-auto">
           <div className="flex items-center gap-2 mb-2">
             <div className={`w-2 h-2 rounded-full ${stats.is_running ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></div>
-            <span className="text-xs font-medium text-slate-400">System Status</span>
+            <span className="text-xs font-medium text-slate-400">Simulation Status</span>
           </div>
           <p className="text-sm font-semibold">{stats.system_status}</p>
         </div>
@@ -129,7 +159,7 @@ function App() {
         <header className="flex justify-between items-center mb-10">
           <div>
             <h2 className="text-3xl font-bold text-white mb-1 font-['Outfit']">Network Intelligence</h2>
-            <p className="text-slate-400 font-medium">Real-time threat detection and anomaly analytics</p>
+            <p className="text-slate-400 font-medium">Intrusion detection demo using NSL-KDD traffic samples</p>
           </div>
           <div className="flex gap-4">
             <button 
@@ -141,7 +171,7 @@ function App() {
               }`}
             >
               {stats.is_running ? <Square size={18} fill="currentColor"/> : <Play size={18} fill="currentColor"/>}
-              {stats.is_running ? 'Stop Monitor' : 'Start Monitor'}
+              {stats.is_running ? 'Stop Simulation' : 'Start Simulation'}
             </button>
             <button 
               onClick={handleTrain}
@@ -153,6 +183,12 @@ function App() {
             </button>
           </div>
         </header>
+        {trainingMessage && (
+          <p role="status" className="mb-4 text-sm text-slate-400">{trainingMessage}</p>
+        )}
+        {requestMessage && (
+          <p role="status" className="mb-4 text-sm text-slate-400">{requestMessage}</p>
+        )}
 
         {activeTab === 'dashboard' && (
           <div className="grid grid-cols-12 gap-6">
@@ -160,28 +196,28 @@ function App() {
             <StatCard 
               className="col-span-4"
               icon={<Database size={24} className="text-blue-400" />}
-              label="Traffic Processed"
+              label="Packets Simulated"
               value={stats.live.packets_processed.toLocaleString()}
-              subLabel="Live Stream Packets"
+              subLabel="NSL-KDD sample traffic"
             />
             <StatCard 
               className="col-span-4"
               icon={<Shield size={24} className="text-emerald-400" />}
-              label="System Security"
-              value="Optimum"
-              subLabel="AI Model RF_v1.2 Active"
+              label="Detection Model"
+              value="Ready"
+              subLabel="Random Forest classifier"
             />
             <StatCard 
               className="col-span-4 border-red-500/20"
               icon={<AlertTriangle size={24} className="text-orange-400" />}
-              label="Intrusions Blocked"
+              label="Intrusions Detected"
               value={stats.live.intrusions_detected}
-              subLabel="Detected in Last 24h"
+              subLabel="During this run"
               urgent={stats.live.intrusions_detected > 0}
             />
 
             {/* Chart Area */}
-            <div className="col-span-8 glass p-6 h-[400px]">
+            <div className="col-span-8 glass p-6 chart-panel">
               <div className="flex justify-between items-center mb-6">
                 <div>
                   <h3 className="text-xl font-bold font-['Outfit']">Threat Activity Graph</h3>
@@ -192,8 +228,9 @@ function App() {
                      <div className="flex items-center gap-2"><div className="w-3 h-3 bg-red-500 rounded-sm"></div><span className="text-xs text-slate-400 uppercase">Alert</span></div>
                 </div>
               </div>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData}>
+              <div className="chart-container">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData}>
                   <defs>
                     <linearGradient id="colorConf" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
@@ -213,12 +250,13 @@ function App() {
                   />
                   <Area type="monotone" dataKey="confidence" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorConf)" />
                   <Area type="monotone" dataKey="is_alert" stroke="#ef4444" strokeWidth={2} fillOpacity={1} fill="url(#colorAlert)" />
-                </AreaChart>
-              </ResponsiveContainer>
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
             </div>
 
             {/* Side Logs */}
-            <div className="col-span-4 glass flex flex-col">
+            <div className="col-span-4 glass flex flex-col events-panel">
               <div className="p-6 border-b border-white/5">
                 <h3 className="font-bold flex items-center gap-2">
                   <Clock size={16} className="text-blue-400" />
@@ -252,13 +290,65 @@ function App() {
           </div>
         )}
 
+        {activeTab === 'training' && (
+          <section className="model-page">
+            <div className="mb-6">
+              <h3 className="text-xl font-bold font-['Outfit']">AI Model</h3>
+              <p className="text-sm text-slate-400">
+                Model artifact and training information used by the sample-traffic simulation.
+              </p>
+            </div>
+            {!modelInfo ? (
+              <p className="text-sm text-slate-400" role="status">Loading model information...</p>
+            ) : (
+              <>
+                <div className="model-grid">
+                  <div className="glass p-6 model-card">
+                    <Cpu size={22} className="text-blue-400" />
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Algorithm</p>
+                    <h4 className="text-xl font-bold">{modelInfo.name}</h4>
+                    <p className="text-xs text-slate-500">Binary traffic classifier</p>
+                  </div>
+                  <div className="glass p-6 model-card">
+                    <Database size={22} className="text-blue-400" />
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Training dataset</p>
+                    <h4 className="text-xl font-bold">{modelInfo.dataset}</h4>
+                    <p className="text-xs text-slate-500">{modelInfo.input_features} input features</p>
+                  </div>
+                  <div className="glass p-6 model-card">
+                    <CheckCircle2 size={22} className={modelInfo.available ? "text-emerald-400" : "text-orange-400"} />
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Model status</p>
+                    <h4 className="text-xl font-bold">{modelInfo.available ? "Ready" : "Not trained"}</h4>
+                    <p className="text-xs text-slate-500">
+                      {modelInfo.available
+                        ? `${(modelInfo.artifact_size_bytes / (1024 * 1024)).toFixed(1)} MB saved artifact`
+                        : "Click Re-Train AI to create the model"}
+                    </p>
+                  </div>
+                </div>
+                <div className="glass p-6 mt-6">
+                  <h4 className="font-bold mb-4">Model details</h4>
+                  <dl className="model-details">
+                    <dt>Prediction classes</dt>
+                    <dd>{modelInfo.classes.join(" / ")}</dd>
+                    <dt>Last trained</dt>
+                    <dd>{modelInfo.last_trained ? new Date(modelInfo.last_trained).toLocaleString() : "Not available"}</dd>
+                    <dt>Evaluation metrics</dt>
+                    <dd>Not calculated by the current training pipeline</dd>
+                  </dl>
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
         {(activeTab === 'live' || activeTab === 'alerts') && (
             <div className="glass overflow-hidden flex flex-col h-[70vh]">
                 <div className="p-6 border-b border-white/5 flex justify-between items-center">
                     <h3 className="text-xl font-bold font-['Outfit']">Real-time Data Stream</h3>
                     <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full bg-blue-500 animate-ping"></div>
-                        <span className="text-xs font-bold text-blue-400 uppercase tracking-widest">Live Flow</span>
+                        <span className="text-xs font-bold text-blue-400 uppercase tracking-widest">Sample Replay</span>
                     </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-0">

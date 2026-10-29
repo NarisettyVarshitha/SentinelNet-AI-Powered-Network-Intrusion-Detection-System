@@ -151,6 +151,52 @@ h1, h2, h3, h4 {
 .overflow-hidden { overflow: hidden; }
 .overflow-y-auto { overflow-y: auto; }
 
+.chart-panel,
+.events-panel {
+  height: 400px;
+  min-height: 400px;
+}
+
+.chart-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-container {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.model-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.model-details {
+  display: grid;
+  grid-template-columns: minmax(10rem, 0.4fr) 1fr;
+  gap: 0.75rem 1.5rem;
+  font-size: 0.875rem;
+}
+
+.model-details dt {
+  color: var(--text-muted);
+}
+
+.model-details dd {
+  overflow-wrap: anywhere;
+}
+
 /* COMPONENT STYLES */
 .glass {
   background: var(--glass-bg);

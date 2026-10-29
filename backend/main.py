@@ -26,14 +26,15 @@ app.add_middleware(
 
 # Paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SENTINEL_SRC = os.path.join(BASE_DIR, 'SentinelNet', 'src')
-DATA_DIR = os.path.join(BASE_DIR, 'SentinelNet', 'data')
-MODEL_DIR = os.path.join(BASE_DIR, 'SentinelNet', 'models')
-LOG_FILE = os.path.join(BASE_DIR, 'SentinelNet', 'alerts.log')
+DATA_DIR = os.path.join(BASE_DIR, 'data')
+MODEL_DIR = os.path.join(BASE_DIR, 'models')
+LOG_FILE = os.path.join(BASE_DIR, 'alerts.log')
+TRAINING_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'train_model.py')
 
 # Global state for simulation
 class SimulationState:
     running = False
+    training = False
     thread = None
     recent_logs = []
     stats = {
@@ -44,15 +45,6 @@ class SimulationState:
     }
 
 sim_state = SimulationState()
-
-def run_script(script_name):
-    script_path = os.path.join(SENTINEL_SRC, script_name)
-    try:
-        subprocess.run([sys.executable, script_path], check=True)
-        return True
-    except Exception as e:
-        print(f"Error running {script_name}: {e}")
-        return False
 
 def simulation_worker():
     global sim_state
@@ -78,6 +70,7 @@ def simulation_worker():
             
         seed_data = pd.read_csv(test_path, nrows=100)
         feature_cols = [c for c in seed_data.columns if c != 'label']
+        numeric_feature_cols = seed_data[feature_cols].select_dtypes(include=np.number).columns
         normal_seeds = seed_data[seed_data['label'] == 0].drop('label', axis=1)
         attack_seeds = seed_data[seed_data['label'] == 1].drop('label', axis=1)
 
@@ -95,8 +88,8 @@ def simulation_worker():
                 continue
 
             # Add some noise
-            for col in feature_cols:
-                if np.issubdtype(base_packet[col], np.number) and base_packet[col] > 1:
+            for col in numeric_feature_cols:
+                if base_packet[col] > 1:
                     base_packet[col] *= random.uniform(0.9, 1.1)
 
             live_packet_df = pd.DataFrame([base_packet], columns=feature_cols)
@@ -155,6 +148,31 @@ def get_stats():
 def get_logs():
     return sim_state.recent_logs
 
+@app.get("/model-info")
+def get_model_info():
+    model_path = os.path.join(MODEL_DIR, 'rf_model.pkl')
+    model_exists = os.path.isfile(model_path)
+    model_info = {
+        "available": model_exists,
+        "name": "Random Forest",
+        "dataset": "NSL-KDD",
+        "input_features": 41,
+        "classes": ["Normal", "Intrusion"],
+        "artifact_size_bytes": None,
+        "last_trained": None,
+    }
+    if model_exists:
+        model_stat = os.stat(model_path)
+        model_info["artifact_size_bytes"] = model_stat.st_size
+        model_info["last_trained"] = datetime.fromtimestamp(
+            model_stat.st_mtime
+        ).astimezone().isoformat(timespec="seconds")
+    return model_info
+
+@app.get("/train")
+def train_instructions():
+    return {"message": "Training is started with POST /train. Use the frontend Re-Train AI button or send a POST request."}
+
 @app.post("/simulation/start")
 def start_simulation(background_tasks: BackgroundTasks):
     if not sim_state.running:
@@ -172,21 +190,35 @@ def stop_simulation():
 
 @app.post("/train")
 def run_training(background_tasks: BackgroundTasks):
-    # This runs the full pipeline
+    if sim_state.training:
+        return {"message": "Training is already in progress"}
+
+    sim_state.training = True
+    sim_state.status = "Training in progress..."
+
     def train_task():
         sim_state.status = "Training in progress..."
-        scripts = [
-            "02_data_preprocessing.py",
-            "03_feature_engineering.py",
-            "04_model_training_supervised.py",
-            "05_anomaly_detection_unsupervised.py",
-            "06_model_evaluation.py"
-        ]
-        for script in scripts:
-            if not run_script(script):
-                sim_state.status = f"Training failed at {script}"
+        try:
+            result = subprocess.run(
+                [sys.executable, TRAINING_SCRIPT],
+                cwd=BASE_DIR,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if result.stdout:
+                print(result.stdout, end="")
+            if result.returncode != 0:
+                error = result.stderr.strip() or f"Trainer exited with code {result.returncode}"
+                print(f"Training failed:\n{error}")
+                sim_state.status = f"Training failed: {error[-300:]}"
                 return
-        sim_state.status = "Training complete"
+            sim_state.status = "Training complete"
+        except Exception as e:
+            sim_state.status = f"Training failed: {e}"
+            print(f"Training failed: {e}")
+        finally:
+            sim_state.training = False
         
     background_tasks.add_task(train_task)
     return {"message": "Training pipeline started in background"}
